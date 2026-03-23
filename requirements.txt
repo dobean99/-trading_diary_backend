@@ -8,3 +8,4 @@ redis
 celery[redis]
 python-dotenv
 python-jose[cryptography]
+ccxt

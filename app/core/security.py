@@ -10,7 +10,9 @@ from app.core.config import settings
 
 
 def hash_password(password: str, iterations: int = 390000) -> str:
-    salt = base64.urlsafe_b64encode(hashlib.sha256(uuid.uuid4().bytes).digest()[:16]).decode()
+    salt = base64.urlsafe_b64encode(
+        hashlib.sha256(uuid.uuid4().bytes).digest()[:16]
+    ).decode()
     dk = hashlib.pbkdf2_hmac(
         "sha256",
         password.encode("utf-8"),
@@ -50,12 +52,16 @@ def create_access_token(user_id: str, username: str) -> str:
         "iat": int(now.timestamp()),
         "exp": int(expires_at.timestamp()),
     }
-    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+    return jwt.encode(
+        payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm
+    )
 
 
 def decode_token(token: str) -> dict:
     try:
-        return jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+        return jwt.decode(
+            token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm]
+        )
     except ExpiredSignatureError as exc:
         raise ValueError("Token expired") from exc
     except JWTError as exc:

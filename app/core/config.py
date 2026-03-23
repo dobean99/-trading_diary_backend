@@ -7,7 +7,9 @@ class Settings(BaseSettings):
     debug: bool = True
     api_v1_prefix: str = "/api/v1"
 
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/trading_diary"
+    database_url: str = (
+        "postgresql+asyncpg://postgres:postgres@localhost:5432/trading_diary"
+    )
     redis_url: str = "redis://localhost:6379/0"
 
     celery_broker_url: str = "redis://localhost:6379/1"
