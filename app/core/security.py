@@ -4,7 +4,7 @@ import hmac
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from jose import JWTError, jwt
+from jose import ExpiredSignatureError, JWTError, jwt
 
 from app.core.config import settings
 
@@ -56,5 +56,7 @@ def create_access_token(user_id: str, username: str) -> str:
 def decode_token(token: str) -> dict:
     try:
         return jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+    except ExpiredSignatureError as exc:
+        raise ValueError("Token expired") from exc
     except JWTError as exc:
         raise ValueError("Invalid token") from exc

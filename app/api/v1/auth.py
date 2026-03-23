@@ -1,12 +1,13 @@
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_current_user, get_token_payload
 from app.core.redis_client import get_redis
-from app.core.security import create_access_token, decode_token, hash_password, verify_password
+from app.core.security import create_access_token, hash_password, verify_password
 from app.db.session import get_db_session
 from app.models.user import User
 from app.schemas.auth import (
@@ -18,7 +19,6 @@ from app.schemas.auth import (
 )
 
 router = APIRouter()
-security = HTTPBearer(auto_error=True)
 
 
 @router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -53,17 +53,15 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db_session
     return TokenResponse(access_token=access_token)
 
 
+@router.get("/me", response_model=UserResponse)
+async def me(current_user: User = Depends(get_current_user)) -> User:
+    return current_user
+
+
 @router.post("/logout", response_model=LogoutResponse)
 async def logout(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    payload: dict[str, Any] = Depends(get_token_payload),
 ) -> LogoutResponse:
-    token = credentials.credentials
-
-    try:
-        payload = decode_token(token)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
-
     jti = payload.get("jti")
     exp = payload.get("exp")
     if not jti or not exp:
