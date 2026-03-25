@@ -6,6 +6,8 @@ import ccxt.async_support as ccxt
 
 from app.core.config import settings
 from app.schemas.market import (
+    FuturesOrderItem,
+    FuturesOrdersResponse,
     FuturesPositionHistoryItem,
     FuturesPositionHistoryResponse,
     FuturesPositionItem,
@@ -99,7 +101,7 @@ async def _fetch_my_trades_range(
 
 @router.get("/coins", response_model=MarketCoinsResponse)
 async def list_coins(
-    exchange: str = Query(default="binance", min_length=2, max_length=30),
+    exchange: str = Query(default="bingx", min_length=2, max_length=30),
     quote: str = Query(default="USDT", min_length=2, max_length=10),
     spot_only: bool = Query(default=True),
     active_only: bool = Query(default=True),
@@ -172,11 +174,12 @@ async def list_coins(
 
 @router.get("/prices", response_model=MarketPricesResponse)
 async def list_prices(
-    exchange: str = Query(default="binance", min_length=2, max_length=30),
+    exchange: str = Query(default="bingx", min_length=2, max_length=30),
     quote: str = Query(default="USDT", min_length=2, max_length=10),
     symbols: list[str] | None = Query(default=None),
     spot_only: bool = Query(default=True),
     active_only: bool = Query(default=True),
+    sort: str = Query(default="volume_desc", pattern="^(volume_desc|alpha)$"),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> MarketPricesResponse:
     exchange_id = exchange.lower()
@@ -200,6 +203,18 @@ async def list_prices(
             detail=f"Failed to load markets from {exchange_id}",
         ) from exc
 
+    def volume_value(symbol: str, tickers_map: dict[str, dict[str, Any]]) -> float:
+        ticker: dict[str, Any] | None = tickers_map.get(symbol)
+        if not ticker:
+            return 0.0
+        raw = ticker.get("quoteVolume")
+        if raw is None:
+            raw = ticker.get("baseVolume")
+        try:
+            return float(raw or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
     symbols_explicit = bool(symbols)
     if symbols_explicit:
         requested_symbols = [
@@ -218,27 +233,42 @@ async def list_prices(
             if market.get("quote") != quote_currency:
                 continue
             candidate_symbols.append(symbol)
-        candidate_symbols.sort()
-
-    candidate_symbols = candidate_symbols[:limit]
     if not candidate_symbols:
         await client.close()
         return MarketPricesResponse(exchange=exchange_id, total=0, items=[])
 
-    try:
-        tickers = await client.fetch_tickers(candidate_symbols)
-    except Exception:
-        tickers = {}
-        for symbol in candidate_symbols:
-            try:
-                tickers[symbol] = await client.fetch_ticker(symbol)
-            except Exception:
-                continue
-    finally:
+    tickers: dict[str, Any] = {}
+    ranked_symbols = candidate_symbols
+
+    if sort == "volume_desc":
+        try:
+            tickers = await client.fetch_tickers(candidate_symbols)
+        except Exception:
+            tickers = {}
+        ranked_symbols = sorted(
+            candidate_symbols,
+            key=lambda symbol: volume_value(symbol, tickers),
+            reverse=True,
+        )
+    else:
+        ranked_symbols = sorted(candidate_symbols)
+
+    selected_symbols = ranked_symbols[:limit]
+    if not selected_symbols:
         await client.close()
+        return MarketPricesResponse(exchange=exchange_id, total=0, items=[])
+
+    missing_symbols = [s for s in selected_symbols if s not in tickers]
+    for symbol in missing_symbols:
+        try:
+            tickers[symbol] = await client.fetch_ticker(symbol)
+        except Exception:
+            continue
+
+    await client.close()
 
     items: list[MarketPriceItem] = []
-    for symbol in candidate_symbols:
+    for symbol in selected_symbols:
         ticker = tickers.get(symbol)
         if ticker is None:
             continue
@@ -258,11 +288,11 @@ async def list_prices(
             )
         )
 
-    if not symbols_explicit:
+    if sort == "alpha":
+        items.sort(key=lambda item: item.symbol)
+    else:
         items.sort(
-            key=lambda item: float(
-                tickers.get(item.symbol, {}).get("quoteVolume") or 0
-            ),
+            key=lambda item: volume_value(item.symbol, tickers),
             reverse=True,
         )
 
@@ -283,7 +313,7 @@ async def get_futures_positions(
             detail="API_KEY or API_SECRET is missing in environment configuration",
         )
 
-    client = ccxt.binanceusdm(
+    client = ccxt.bingx(
         {
             "apiKey": settings.api_key,
             "secret": settings.api_secret,
@@ -294,12 +324,11 @@ async def get_futures_positions(
 
     try:
         positions = await client.fetch_positions()
-        # balance = await positions.fetch_balance()
-        # print(balance["info"])
+
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to fetch Binance futures positions",
+            detail="Failed to fetch BingX futures positions",
         ) from exc
     finally:
         await client.close()
@@ -328,7 +357,7 @@ async def get_futures_positions(
         )
 
     return FuturesPositionsResponse(
-        exchange="binanceusdm",
+        exchange="bingx",
         total=len(items),
         items=items,
     )
@@ -360,7 +389,7 @@ async def get_futures_positions_history(
     from_ms = _to_ms(start_dt)
     to_ms = _to_ms(end_dt)
 
-    client = ccxt.binanceusdm(
+    client = ccxt.bingx(
         {
             "apiKey": settings.api_key,
             "secret": settings.api_secret,
@@ -375,7 +404,7 @@ async def get_futures_positions_history(
         await client.close()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to load Binance futures markets",
+            detail="Failed to load BingX futures markets",
         ) from exc
 
     target_symbols = []
@@ -404,7 +433,7 @@ async def get_futures_positions_history(
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to fetch Binance futures trade history",
+            detail="Failed to fetch BingX futures trade history",
         ) from exc
     finally:
         await client.close()
@@ -450,9 +479,94 @@ async def get_futures_positions_history(
         )
 
     return FuturesPositionHistoryResponse(
-        exchange="binanceusdm",
+        exchange="bingx",
         from_time=start_dt.astimezone(UTC).isoformat(),
         to_time=end_dt.astimezone(UTC).isoformat(),
+        total=len(items),
+        items=items,
+    )
+
+
+@router.get("/futures/orders", response_model=FuturesOrdersResponse)
+async def get_futures_orders(
+    symbol: str | None = Query(default=None, description="Example: BTC/USDT"),
+    since: datetime | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    only_open: bool = Query(default=False),
+) -> FuturesOrdersResponse:
+    if not settings.api_key or not settings.api_secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="API_KEY or API_SECRET is missing in environment configuration",
+        )
+    since_ms = _to_ms(since) if since else None
+    normalized_symbol = (
+        symbol.strip().upper() if isinstance(symbol, str) and symbol.strip() else None
+    )
+
+    client = ccxt.bingx(
+        {
+            "apiKey": settings.api_key,
+            "secret": settings.api_secret,
+            "enableRateLimit": True,
+            "options": {"defaultType": "future"},
+        }
+    )
+
+    try:
+        if only_open:
+            orders = await client.fetch_open_orders(
+                symbol=normalized_symbol, since=since_ms, limit=limit
+            )
+        else:
+            orders = await client.fetch_orders(
+                symbol=normalized_symbol, since=since_ms, limit=limit
+            )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to fetch futures orders",
+        ) from exc
+    finally:
+        await client.close()
+
+    items: list[FuturesOrderItem] = []
+    for order in orders:
+        info = order.get("info") or {}
+        items.append(
+            FuturesOrderItem(
+                id=str(order.get("id")) if order.get("id") is not None else None,
+                client_order_id=(
+                    str(order.get("clientOrderId"))
+                    if order.get("clientOrderId") is not None
+                    else (
+                        str(info.get("clientOrderId"))
+                        if info.get("clientOrderId") is not None
+                        else None
+                    )
+                ),
+                symbol=order.get("symbol"),
+                type=order.get("type"),
+                side=order.get("side"),
+                status=order.get("status"),
+                price=_to_float(order.get("price")),
+                amount=_to_float(order.get("amount")),
+                filled=_to_float(order.get("filled")),
+                remaining=_to_float(order.get("remaining")),
+                cost=_to_float(order.get("cost")),
+                average=_to_float(order.get("average")),
+                reduce_only=(
+                    info.get("reduceOnly")
+                    if isinstance(info.get("reduceOnly"), bool)
+                    else None
+                ),
+                timestamp=order.get("timestamp"),
+                datetime=order.get("datetime"),
+            )
+        )
+
+    return FuturesOrdersResponse(
+        exchange="bingx",
         total=len(items),
         items=items,
     )

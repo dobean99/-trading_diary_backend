@@ -64,3 +64,27 @@ class FuturesPositionHistoryResponse(BaseModel):
     to_time: str
     total: int
     items: list[FuturesPositionHistoryItem]
+
+
+class FuturesOrderItem(BaseModel):
+    id: str | None
+    client_order_id: str | None
+    symbol: str | None
+    type: str | None
+    side: str | None
+    status: str | None
+    price: float | None
+    amount: float | None
+    filled: float | None
+    remaining: float | None
+    cost: float | None
+    average: float | None
+    reduce_only: bool | None
+    timestamp: int | None
+    datetime: str | None
+
+
+class FuturesOrdersResponse(BaseModel):
+    exchange: str
+    total: int
+    items: list[FuturesOrderItem]
