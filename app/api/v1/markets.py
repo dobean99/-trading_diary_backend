@@ -13,6 +13,8 @@ from app.schemas.market import (
     FuturesPositionItem,
     FuturesPositionsResponse,
     MarketCoinsResponse,
+    MarketOHLCVItem,
+    MarketOHLCVResponse,
     MarketPriceItem,
     MarketPricesResponse,
 )
@@ -298,6 +300,68 @@ async def list_prices(
 
     return MarketPricesResponse(
         exchange=exchange_id,
+        total=len(items),
+        items=items,
+    )
+
+
+@router.get("/ohlcv", response_model=MarketOHLCVResponse)
+async def get_ohlcv(
+    exchange: str = Query(default="bingx", min_length=2, max_length=30),
+    symbol: str = Query(..., min_length=3, max_length=30, description="Example: BTC/USDT"),
+    timeframe: str = Query(default="1h", min_length=1, max_length=10),
+    since: datetime | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=1500),
+) -> MarketOHLCVResponse:
+    exchange_id = exchange.lower()
+    normalized_symbol = symbol.strip().upper()
+    since_ms = _to_ms(since) if since else None
+
+    if exchange_id not in ccxt.exchanges:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported exchange: {exchange_id}",
+        )
+
+    exchange_class = getattr(ccxt, exchange_id)
+    client = exchange_class({"enableRateLimit": True})
+
+    try:
+        ohlcv = await client.fetch_ohlcv(
+            symbol=normalized_symbol,
+            timeframe=timeframe,
+            since=since_ms,
+            limit=limit,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to fetch OHLCV data",
+        ) from exc
+    finally:
+        await client.close()
+
+    items: list[MarketOHLCVItem] = []
+    for row in ohlcv:
+        if not isinstance(row, (list, tuple)) or len(row) < 6:
+            continue
+        ts = int(row[0])
+        items.append(
+            MarketOHLCVItem(
+                timestamp=ts,
+                datetime=datetime.fromtimestamp(ts / 1000, tz=UTC).isoformat(),
+                open=float(row[1]),
+                high=float(row[2]),
+                low=float(row[3]),
+                close=float(row[4]),
+                volume=float(row[5]),
+            )
+        )
+
+    return MarketOHLCVResponse(
+        exchange=exchange_id,
+        symbol=normalized_symbol,
+        timeframe=timeframe,
         total=len(items),
         items=items,
     )

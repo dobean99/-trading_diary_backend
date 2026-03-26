@@ -20,6 +20,24 @@ class MarketPricesResponse(BaseModel):
     items: list[MarketPriceItem]
 
 
+class MarketOHLCVItem(BaseModel):
+    timestamp: int
+    datetime: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+
+
+class MarketOHLCVResponse(BaseModel):
+    exchange: str
+    symbol: str
+    timeframe: str
+    total: int
+    items: list[MarketOHLCVItem]
+
+
 class FuturesPositionItem(BaseModel):
     symbol: str
     side: str | None
